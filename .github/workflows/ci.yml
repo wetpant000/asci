@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.8", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Every picture renders (plain and flipped)
+        shell: bash
+        run: |
+          for w in $(python -c "import asci; print(' '.join(asci.ART))"); do
+            python asci.py "$w" > /dev/null
+            python asci.py -f --border "$w" > /dev/null
+          done
+      - name: Features
+        shell: bash
+        run: |
+          python asci.py -s "hello there" --side cat dog
+          python asci.py -r -c rainbow
+          python asci.py -l animals
+          python asci.py hello
+          echo "pizza kittens" | python asci.py
+          printf ' o\n/|\\\n/ \\\n' > me.txt
+          python asci.py --add stickman me.txt && python asci.py stickman && python asci.py --remove stickman
+      - name: pip install gives asci and asi
+        shell: bash
+        run: |
+          python -m pip install .
+          asci --version
+          asi cat
+
+  install-scripts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo sh install.sh && asci cat && asi dog && sudo sh uninstall.sh
+
+  install-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.ps1 (with Python)
+        shell: powershell
+        run: |
+          .\install.ps1
+          asci cat
+          asi --side dog fish
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\uninstall.ps1

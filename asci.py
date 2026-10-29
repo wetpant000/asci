@@ -5,20 +5,26 @@ asci - turn a word into an ASCII picture, right in your terminal.
 Works fully offline on Linux, macOS and Windows (Python 3.6+, no packages).
 
 Usage (`asi` works the same as `asci`):
-    asci cat              -> picture of a cat
-    asci cat dog fish     -> several pictures
-    asci hello            -> no picture known? prints big banner letters
-    asci --list           -> show every word that has a picture
-    asci --color red cat  -> colored output
-    asci --banner cat     -> force big banner letters
+    asci cat                  -> picture of a cat
+    asci cat dog fish         -> several pictures
+    asci --side cat dog       -> pictures next to each other
+    asci -s "hi there" cat    -> cat with a speech bubble
+    asci -r                   -> random picture
+    asci hello                -> no picture known? prints big banner letters
+    asci -l [animals]         -> list pictures (optionally one category)
+    asci -c rainbow cat       -> colored output
+    asci --add dragon my.txt  -> save your own picture
+    echo cat | asci           -> read words from a pipe
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 import argparse
 import difflib
 import os
+import random
 import sys
+import textwrap
 
 # --------------------------------------------------------------------------
 # Picture library (all offline). Keys are lowercase words.
@@ -840,6 +846,48 @@ COLORS = {
     "red": "31", "green": "32", "yellow": "33", "blue": "34",
     "magenta": "35", "cyan": "36", "white": "37",
 }
+RAINBOW = ["31", "33", "32", "36", "34", "35"]
+
+CATEGORIES = {
+    "animals": [
+        "cat", "dog", "fish", "bird", "duck", "owl", "rabbit", "bear", "cow",
+        "pig", "mouse", "snake", "turtle", "butterfly", "elephant", "penguin",
+        "frog", "spider", "monkey", "lion", "horse", "sheep", "chicken", "crab",
+        "octopus", "whale", "shark", "bat", "bee", "snail", "fox", "panda",
+        "koala", "hedgehog", "camel", "dinosaur", "giraffe",
+    ],
+    "food": ["apple", "pizza", "icecream", "burger", "cake", "coffee"],
+    "vehicles": ["car", "rocket", "boat", "train", "plane", "bicycle"],
+    "nature": ["tree", "flower", "sun", "moon", "star", "cloud", "cactus",
+               "mushroom", "snowman"],
+}
+
+# Characters swapped when a picture is mirrored with --flip.
+MIRROR = str.maketrans("/\\()<>[]{}bdpq", "\\/)(><][}{dbqp")
+
+
+def user_art_dir():
+    """Folder holding the user's own pictures (one <word>.txt per picture)."""
+    if os.environ.get("ASCI_HOME"):
+        return os.environ["ASCI_HOME"]
+    if os.name == "nt" and os.environ.get("APPDATA"):
+        return os.path.join(os.environ["APPDATA"], "asci")
+    return os.path.join(os.path.expanduser("~"), ".asci")
+
+
+def load_user_art():
+    """Add the user's own pictures to ART. Returns their names."""
+    folder = user_art_dir()
+    names = []
+    if not os.path.isdir(folder):
+        return names
+    for fname in sorted(os.listdir(folder)):
+        if fname.endswith(".txt"):
+            name = fname[:-4].lower()
+            with open(os.path.join(folder, fname), encoding="utf-8") as f:
+                ART[name] = "\n" + f.read().strip("\n") + "\n"
+            names.append(name)
+    return names
 
 
 def banner(text):
@@ -873,60 +921,207 @@ def lookup(word):
     return None, None, False
 
 
+def flip(text):
+    """Mirror a picture left-to-right."""
+    lines = text.split("\n")
+    width = max(len(l) for l in lines)
+    return "\n".join(l.ljust(width)[::-1].translate(MIRROR).rstrip() for l in lines)
+
+
+def frame(text):
+    """Draw a box around a picture."""
+    lines = text.split("\n")
+    width = max(len(l) for l in lines)
+    edge = "+" + "-" * (width + 2) + "+"
+    return "\n".join([edge] + ["| " + l.ljust(width) + " |" for l in lines] + [edge])
+
+
+def bubble(text, width=40):
+    """Speech bubble with a tail pointing down at the picture."""
+    lines = textwrap.wrap(text, width) or [""]
+    w = max(len(l) for l in lines)
+    out = [" " + "_" * (w + 2)]
+    if len(lines) == 1:
+        out.append("< " + lines[0].ljust(w) + " >")
+    else:
+        for i, l in enumerate(lines):
+            if i == 0:
+                left, right = "/", "\\"
+            elif i == len(lines) - 1:
+                left, right = "\\", "/"
+            else:
+                left, right = "|", "|"
+            out.append(left + " " + l.ljust(w) + " " + right)
+    out += [" " + "-" * (w + 2), "    \\", "     \\"]
+    return "\n".join(out)
+
+
+def side_by_side(blocks, gap=4):
+    """Join several pictures horizontally, aligned at the bottom."""
+    split = [b.split("\n") for b in blocks]
+    widths = [max(len(l) for l in lines) for lines in split]
+    height = max(len(lines) for lines in split)
+    split = [[""] * (height - len(lines)) + lines for lines in split]
+    rows = []
+    for i in range(height):
+        rows.append((" " * gap).join(
+            split[j][i].ljust(widths[j]) for j in range(len(split))).rstrip())
+    return "\n".join(rows)
+
+
+def colorize(text, color):
+    if not color:
+        return text
+    if color == "rainbow":
+        return "\n".join("\033[%sm%s\033[0m" % (RAINBOW[i % len(RAINBOW)], l)
+                         for i, l in enumerate(text.split("\n")))
+    return "\033[%sm%s\033[0m" % (COLORS[color], text)
+
+
 def enable_windows_ansi():
     """Turn on ANSI color support in the Windows console."""
     if os.name == "nt":
         os.system("")
 
 
+def print_list(category, custom):
+    groups = dict(CATEGORIES)
+    listed = {n for names in CATEGORIES.values() for n in names}
+    groups["objects"] = sorted(n for n in ART if n not in listed and n not in custom)
+    if custom:
+        groups["custom"] = custom
+    if category != "all":
+        if category not in groups:
+            sys.exit("Unknown category '%s'. Choose from: %s"
+                     % (category, ", ".join(groups)))
+        groups = {category: groups[category]}
+    for name, items in groups.items():
+        print("%s (%d):" % (name.upper(), len(items)))
+        print(textwrap.fill(", ".join(sorted(items)), 76,
+                            initial_indent="  ", subsequent_indent="  "))
+        print()
+    if category == "all":
+        print("%d pictures. Aliases also work, e.g. kitty, puppy, bike, airplane."
+              % len(ART))
+
+
+def add_art(name, path):
+    name = name.lower()
+    if not name.replace("-", "").isalnum():
+        sys.exit("Name must be letters, numbers or '-': %s" % name)
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        sys.exit("Cannot read %s: %s" % (path, e))
+    folder = user_art_dir()
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, name + ".txt"), "w", encoding="utf-8") as f:
+        f.write(text)
+    print("Added '%s'. Try: asci %s" % (name, name))
+
+
+def remove_art(name):
+    path = os.path.join(user_art_dir(), name.lower() + ".txt")
+    if not os.path.exists(path):
+        sys.exit("'%s' is not one of your own pictures (built-ins can't be removed)."
+                 % name)
+    os.remove(path)
+    print("Removed '%s'." % name)
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Show an ASCII picture for a word (works offline).")
+        prog="asci",
+        description="Show an ASCII picture for a word (works offline). "
+                    "`asi` is the same command.",
+        epilog="examples:  asci cat | asci -s 'hello!' dog | asci --side cat dog "
+               "| asci -r -c rainbow | asci -l animals")
     parser.add_argument("words", nargs="*", help="word(s) to draw, e.g. cat")
-    parser.add_argument("-l", "--list", action="store_true",
-                        help="list all words that have a picture")
-    parser.add_argument("-b", "--banner", action="store_true",
-                        help="always print big banner letters instead of a picture")
-    parser.add_argument("-c", "--color", choices=sorted(COLORS),
+    parser.add_argument("-l", "--list", nargs="?", const="all", metavar="CATEGORY",
+                        help="list pictures (optionally one category: animals, "
+                             "food, vehicles, nature, objects, custom)")
+    parser.add_argument("-r", "--random", action="store_true",
+                        help="show a random picture")
+    parser.add_argument("-s", "--say", metavar="TEXT",
+                        help="add a speech bubble above the picture")
+    parser.add_argument("-c", "--color", choices=sorted(COLORS) + ["rainbow"],
                         help="color the output")
+    parser.add_argument("-f", "--flip", action="store_true",
+                        help="mirror the picture left-to-right")
+    parser.add_argument("--border", action="store_true",
+                        help="draw a box around each picture")
+    parser.add_argument("--side", action="store_true",
+                        help="show several pictures next to each other")
+    parser.add_argument("--no-label", action="store_true",
+                        help="don't print the name under the picture")
+    parser.add_argument("-b", "--banner", action="store_true",
+                        help="print big banner letters instead of a picture")
+    parser.add_argument("--add", nargs=2, metavar=("NAME", "FILE"),
+                        help="save your own picture from a text file")
+    parser.add_argument("--remove", metavar="NAME",
+                        help="delete one of your own pictures")
     parser.add_argument("-v", "--version", action="version",
                         version="asci " + __version__)
     args = parser.parse_args()
 
+    if args.add:
+        return add_art(*args.add)
+    if args.remove:
+        return remove_art(args.remove)
+
+    custom = load_user_art()
+
     if args.list:
-        print("Pictures available:\n  " + ", ".join(sorted(ART)))
-        print("\nAlso understood:\n  " + ", ".join(
-            "%s->%s" % (k, v) for k, v in sorted(ALIASES.items())))
-        return
+        return print_list(args.list.lower(), custom)
 
-    if not args.words:
-        try:
-            line = input("Enter a word: ")
-        except (EOFError, KeyboardInterrupt):
-            return
-        args.words = line.split()
-        if not args.words:
+    words = list(args.words)
+    if args.random:
+        words.append(random.choice(sorted(ART)))
+    if not words:
+        if sys.stdin.isatty():
+            try:
+                words = input("Enter a word: ").split()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return
+        else:
+            words = sys.stdin.read().split()
+        if not words:
             return
 
-    start, end = "", ""
-    if args.color and sys.stdout.isatty():
+    color = None
+    if args.color and sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
         enable_windows_ansi()
-        start, end = "\033[%sm" % COLORS[args.color], "\033[0m"
+        color = args.color
 
     if args.banner:
-        print(start + banner(" ".join(args.words)) + end)
-        return
+        blocks = [banner(" ".join(words))]
+    else:
+        blocks = []
+        for word in words:
+            art, name, guessed = lookup(word)
+            if art:
+                if guessed:
+                    print("(showing '%s' for '%s')" % (name, word), file=sys.stderr)
+                block = art.strip("\n")
+                if args.flip:
+                    block = flip(block)
+                if not args.no_label:
+                    block += "\n  " + name.upper()
+            else:
+                block = banner(word)
+            blocks.append(block)
 
-    for word in args.words:
-        art, name, guessed = lookup(word)
-        if art:
-            if guessed:
-                print("(showing '%s' for '%s')" % (name, word))
-            print(start + art.strip("\n") + end)
-            print("  " + name.upper())
-        else:
-            print(start + banner(word) + end)
-        print()
+    if args.border:
+        blocks = [frame(b) for b in blocks]
+    if args.say:
+        blocks[0] = bubble(args.say) + "\n" + blocks[0]
+
+    if args.side and len(blocks) > 1:
+        print(colorize(side_by_side(blocks), color))
+    else:
+        print("\n\n".join(colorize(b, color) for b in blocks))
 
 
 if __name__ == "__main__":
