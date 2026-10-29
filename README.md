@@ -3,6 +3,8 @@
 Type a word, get an ASCII picture in your terminal. Works **offline** on **Linux, macOS and Windows**.
 It's a single Python file with no dependencies. On Windows there's also a standalone `.exe` that doesn't need Python.
 
+![asci demo](docs/demo.gif)
+
 ```
 $ asci -s "meow!" cat
  _______
