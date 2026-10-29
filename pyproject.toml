@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asci"
+version = "1.0.0"
+description = "Type a word, get an ASCII picture in your terminal. Works offline."
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+keywords = ["ascii", "ascii-art", "terminal", "cli", "fun"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+    "Topic :: Games/Entertainment",
+]
+
+[project.urls]
+Homepage = "https://github.com/wetpant000/asci"
+
+[project.scripts]
+asci = "asci:main"
+asi = "asci:main"
+
+[tool.setuptools]
+py-modules = ["asci"]
